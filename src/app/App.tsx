@@ -272,7 +272,7 @@ export default function App() {
         customBg: customBgRef.current,
         customFg: customFgRef.current,
       });
-    }, 600);
+    }, 2500);
   }
 
   function handleEditorInput() {
