@@ -1,3 +1,4 @@
+/* Main stylesheet — pulls in fonts, Tailwind, and base theme colors */
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';

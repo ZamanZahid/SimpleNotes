@@ -1,517 +1,620 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Plus, Moon, Sun, ChevronLeft, ChevronRight, AlignLeft, Hash, Pin, MoreHorizontal, Palette } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Plus, ChevronLeft, ChevronRight, AlignLeft, Hash, Pin, MoreHorizontal } from "lucide-react";
+import {
+  createPage,
+  getTitle,
+  countWords,
+  formatTimer,
+  loadData,
+  saveData,
+  sortPages,
+  getThemeColors,
+  getEmptyData,
+  type Page,
+  type ThemeMode,
+} from "./utils";
+import { IconButton, WordStats, NameModal, PageMenu, ThemeDropdown } from "./components";
+import { FormattingToolbar } from "./FormattingToolbar";
 
-interface Page {
-  id: string;
-  title: string;
-  content: string;
-  pinned: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-type ThemeMode = "light" | "dark" | "custom";
-
-function createPage(content = "", title = ""): Page {
-  const now = new Date();
-  return { id: crypto.randomUUID(), title, content, pinned: false, createdAt: now, updatedAt: now };
-}
-
-function getTitle(page: Page): string {
-  if (page.title) return page.title;
-  const firstLine = page.content.split("\n")[0]?.trim();
-  return firstLine || "Untitled";
-}
-
-function wordCount(text: string): number {
-  return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
-}
-
-function charCount(text: string): number {
-  return text.length;
-}
-
-function formatTimer(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-const STORAGE_KEY = "blankpage_data";
-
-function loadData(): { pages: Page[]; activeId: string | null; themeMode: ThemeMode; customBg: string; customFg: string } {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { pages: [], activeId: null, themeMode: "light", customBg: "#2d4a3e", customFg: "#c8e6c9" };
-    const parsed = JSON.parse(raw);
-    return {
-      pages: parsed.pages.map((p: Page) => ({
-        ...p,
-        pinned: p.pinned ?? false,
-        createdAt: new Date(p.createdAt),
-        updatedAt: new Date(p.updatedAt),
-      })),
-      activeId: parsed.activeId,
-      themeMode: parsed.themeMode ?? "light",
-      customBg: parsed.customBg ?? "#2d4a3e",
-      customFg: parsed.customFg ?? "#c8e6c9",
-    };
-  } catch {
-    return { pages: [], activeId: null, themeMode: "light", customBg: "#2d4a3e", customFg: "#c8e6c9" };
+// Strip HTML tags to get raw plain text for word/char counting
+function stripHtml(html: string): string {
+  let text = "";
+  if (typeof window !== "undefined" && window.DOMParser) {
+    const htmlWithNewlines = html.replace(/<br\s*\/?>/gi, "\n");
+    const doc = new DOMParser().parseFromString(htmlWithNewlines, "text/html");
+    text = doc.body.textContent || "";
+  } else {
+    text = html
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">");
   }
-}
-
-function NameModal({ dark, onConfirm, onCancel, label = "Page name" }: {
-  dark: boolean; onConfirm: (name: string) => void; onCancel: () => void; label?: string;
-}) {
-  const [value, setValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-  const bg = dark ? "#1a1a18" : "#ffffff";
-  const fg = dark ? "#e0e0dc" : "#1a1a18";
-  const muted = dark ? "#4a4a45" : "#b0b0b0";
-  const border = dark ? "#2e2e2a" : "#e0e0dc";
-  const inputBg = dark ? "#111110" : "#f5f5f3";
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }} onClick={onCancel}>
-      <div className="flex flex-col gap-4 rounded-xl p-5" style={{ background: bg, border: `1px solid ${border}`, width: 320, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }} onClick={(e) => e.stopPropagation()}>
-        <span style={{ fontSize: 14, color: fg }}>{label}</span>
-        <input ref={inputRef} value={value} onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onConfirm(value.trim()); if (e.key === "Escape") onCancel(); }}
-          placeholder="Untitled" className="rounded-lg px-3 outline-none"
-          style={{ height: 36, background: inputBg, border: `1px solid ${border}`, color: fg, fontSize: 14 }} />
-        <div className="flex gap-2 justify-end">
-          <button onClick={onCancel} className="rounded-lg px-4" style={{ height: 32, fontSize: 13, color: muted, background: "transparent", border: `1px solid ${border}` }}>Cancel</button>
-          <button onClick={() => onConfirm(value.trim())} className="rounded-lg px-4" style={{ height: 32, fontSize: 13, color: dark ? "#111110" : "#fff", background: dark ? "#e0e0dc" : "#1a1a18" }}>Create</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PageMenu({ dark, pinned, onPin, onRename, onDelete, onClose, anchorRect }: {
-  dark: boolean; pinned: boolean; onPin: () => void; onRename: () => void; onDelete: () => void; onClose: () => void; anchorRect: DOMRect;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const bg = dark ? "#1e1e1b" : "#ffffff";
-  const fg = dark ? "#e0e0dc" : "#1a1a18";
-  const border = dark ? "#2e2e2a" : "#e0e0dc";
-  const hoverBg = dark ? "#2a2a27" : "#f0f0ee";
-  useEffect(() => {
-    const handle = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose(); };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [onClose]);
-  const top = anchorRect.bottom + 4;
-  const left = anchorRect.right - 150;
-  const item = (label: string, onClick: () => void, red = false) => (
-    <button key={label} className="w-full text-left px-3 rounded-lg transition-colors"
-      style={{ height: 34, fontSize: 13, color: red ? "#e05252" : fg, background: "transparent" }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = hoverBg)}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-      onClick={() => { onClick(); onClose(); }}>
-      {label}
-    </button>
-  );
-  return (
-    <div ref={menuRef} className="fixed z-50 flex flex-col p-1 rounded-xl"
-      style={{ top, left, width: 150, background: bg, border: `1px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.16)" }}>
-      {item(pinned ? "Unpin" : "Pin", onPin)}
-      {item("Rename", onRename)}
-      {item("Delete", onDelete, true)}
-    </div>
-  );
-}
-
-function ThemeDropdown({ themeMode, customBg, customFg, hoverBg, muted, borderColor, onLight, onDark, onCustom, onClear }: {
-  themeMode: ThemeMode; customBg: string; customFg: string;
-  hoverBg: string; muted: string; borderColor: string;
-  onLight: () => void; onDark: () => void;
-  onCustom: (bg: string, fgColor: string) => void;
-  onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [localBg, setLocalBg] = useState(customBg);
-  const colorInputRef = useRef<HTMLInputElement>(null);
-  const ref = useRef<HTMLDivElement>(null);
-
-  // Always-white/always-dark panel bg — independent of current theme
-  const dropBg = "#ffffff";
-  const dropBorder = "#e0e0dc";
-
-  const handleClose = useCallback(() => {
-    onCustom(localBg, customFg);
-    setOpen(false);
-  }, [localBg, customFg, onCustom]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) handleClose();
-    };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [open, handleClose]);
-
-  const triggerIcon = themeMode === "light" ? <Sun size={14} /> : themeMode === "dark" ? <Moon size={14} /> : <Palette size={14} />;
-
-  // Fixed styles for light/dark buttons so they never change with theme
-  const lightBtnStyle: React.CSSProperties = {
-    width: 32, height: 32, borderRadius: 6,
-    border: themeMode === "light" ? "1.5px solid #aaaaaa" : "1px solid #e0e0dc",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    background: "#ffffff", cursor: "pointer", color: "#888888", flexShrink: 0,
-  };
-
-  const darkBtnStyle: React.CSSProperties = {
-    width: 32, height: 32, borderRadius: 6,
-    border: themeMode === "dark" ? "1.5px solid #777770" : "1px solid #333330",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    background: "#111110", cursor: "pointer", color: "#777770", flexShrink: 0,
-  };
-
-  const customBtnStyle: React.CSSProperties = {
-    width: 32, height: 32, borderRadius: 6,
-    border: themeMode === "custom" ? "1.5px solid #aaaaaa" : "1px solid #e0e0dc",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    background: localBg, cursor: "pointer", flexShrink: 0, overflow: "hidden",
-  };
-
-  return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center justify-center rounded transition-colors"
-        style={{ width: 30, height: 30, color: muted }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = hoverBg)}
-        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-      >
-        {triggerIcon}
-      </button>
-
-      {open && (
-        <div
-          className="absolute right-0 top-full mt-1 z-50 flex flex-col items-center gap-2 p-2"
-          style={{
-            background: dropBg,
-            border: `1px solid ${dropBorder}`,
-            borderRadius: 10,
-            boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
-          }}
-        >
-          {/* Light — always white */}
-          <button style={lightBtnStyle} onClick={() => { onLight(); setOpen(false); }} title="Light">
-            <Sun size={13} />
-          </button>
-
-          {/* Dark — always dark */}
-          <button style={darkBtnStyle} onClick={() => { onDark(); setOpen(false); }} title="Dark">
-            <Moon size={13} />
-          </button>
-
-          {/* Custom BG swatch */}
-          <button
-            style={customBtnStyle}
-            onClick={() => colorInputRef.current?.click()}
-            title="Custom color"
-          />
-          <input
-            ref={colorInputRef}
-            type="color"
-            value={localBg}
-            onChange={(e) => { setLocalBg(e.target.value); onCustom(e.target.value, customFg); }}
-            style={{ width: 0, height: 0, opacity: 0, position: "absolute", pointerEvents: "none" }}
-          />
-
-          {/* Clear */}
-          <button
-            onClick={() => { onClear(); setOpen(false); }}
-            style={{
-              width: 32, height: 32, borderRadius: 6, border: `1px solid #e05252`,
-              fontSize: 10, color: "#e05252", background: "transparent",
-              cursor: "pointer", letterSpacing: "0.03em",
-            }}>
-            Clear
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  return text.replace(/\s+/g, " ").trim();
 }
 
 export default function App() {
+  // Load saved data, or start with a Welcome note
   const saved = loadData();
-  const initialPages = saved.pages.length > 0 ? saved.pages : [createPage("Welcome to blank.page\n\nA quiet place to write. No formatting bars, no distractions — just you and the page.", "Welcome")];
-  const initialActiveId = saved.activeId ?? initialPages[0].id;
+  const startingPages = saved.pages.length > 0 ? saved.pages : [createPage("", "Welcome")];
 
-  const [pages, setPages] = useState<Page[]>(initialPages);
-  const [activeId, setActiveId] = useState<string>(initialActiveId);
+  // --- State ---
+  const [pages, setPages] = useState(startingPages);
+  const [activeId, setActiveId] = useState(saved.activeId ?? startingPages[0].id);
   const [themeMode, setThemeMode] = useState<ThemeMode>(saved.themeMode);
   const [customBg, setCustomBg] = useState(saved.customBg);
   const [customFg, setCustomFg] = useState(saved.customFg);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [focusMode, setFocusMode] = useState(false);
-  const [saveIndicator, setSaveIndicator] = useState<"idle" | "saving" | "saved">("idle");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [focusSeconds, setFocusSeconds] = useState(0);
   const [showNewModal, setShowNewModal] = useState(false);
   const [menuState, setMenuState] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [inlineEditId, setInlineEditId] = useState<string | null>(null);
-  const [inlineEditValue, setInlineEditValue] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const inlineInputRef = useRef<HTMLInputElement>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const focusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // --- Refs ---
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);   // visual "saved" indicator timer
+  const contentSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null); // debounced localStorage write
+  const focusTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const focusStartRef = useRef<number>(0);
 
-  const dark = themeMode === "dark";
-  const sortedPages = [...pages.filter((p) => p.pinned), ...pages.filter((p) => !p.pinned)];
+  // Always-fresh refs to prevent stale closures inside debounced callbacks
+  const activeIdRef = useRef(activeId);
+  const themeModeRef = useRef(themeMode);
+  const customBgRef = useRef(customBg);
+  const customFgRef = useRef(customFg);
+  activeIdRef.current = activeId;
+  themeModeRef.current = themeMode;
+  customBgRef.current = customBg;
+  customFgRef.current = customFg;
+
+  // --- Derived values ---
+  const theme = getThemeColors(themeMode, customBg, customFg);
+  const divider = `1px dotted ${theme.border}`;
   const activePage = pages.find((p) => p.id === activeId) ?? pages[0];
+  const content = activePage?.content ?? "";
+  const plainText = stripHtml(content);
+  const wordCount = countWords(plainText);
+  const charCount = plainText.length;
+  const menuPage = menuState ? pages.find((p) => p.id === menuState.id) : null;
 
+  // Save settings (activeId, theme) immediately whenever they change.
+  // NOTE: "pages" is intentionally absent — content changes are debounced via updateContent().
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ pages, activeId, themeMode, customBg, customFg }));
+    saveData({ pages, activeId, themeMode, customBg, customFg });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, themeMode, customBg, customFg]);
+
+  // Synchronously save any unsaved editor content if the browser tab/page is closed
+  useEffect(() => {
+    function handleBeforeUnload() {
+      if (contentSaveRef.current) {
+        clearTimeout(contentSaveRef.current);
+        saveData({ pages, activeId, themeMode, customBg, customFg });
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [pages, activeId, themeMode, customBg, customFg]);
 
-  useEffect(() => { setTimeout(() => textareaRef.current?.focus(), 50); }, [activeId]);
-
+  // Keyboard shortcuts (Escape to exit Focus Mode, Cmd/Ctrl + S to force save)
   useEffect(() => {
-    if (inlineEditId) setTimeout(() => { inlineInputRef.current?.focus(); inlineInputRef.current?.select(); }, 30);
-  }, [inlineEditId]);
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && focusMode) {
+        setFocusMode(false);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        if (contentSaveRef.current) {
+          clearTimeout(contentSaveRef.current);
+          contentSaveRef.current = null;
+        }
+        saveData({ pages, activeId, themeMode, customBg, customFg });
+        setSaveStatus("saved");
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusMode, pages, activeId, themeMode, customBg, customFg]);
 
+  // Sync editor innerHTML when switching pages (NOT when content changes from typing)
+  useEffect(() => {
+    if (!editorRef.current) return;
+    editorRef.current.innerHTML = content;
+    setTimeout(() => editorRef.current?.focus(), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]); // only activeId — never "content", or cursor jumps on every keystroke
+
+  // Focus the rename input when renaming starts
+  useEffect(() => {
+    if (!editingId) return;
+    setTimeout(() => {
+      editInputRef.current?.focus();
+      editInputRef.current?.select();
+    }, 30);
+  }, [editingId]);
+
+  // Stopwatch while in focus mode
   useEffect(() => {
     if (focusMode) {
       setFocusSeconds(0);
-      focusIntervalRef.current = setInterval(() => setFocusSeconds((s) => s + 1), 1000);
-    } else {
-      if (focusIntervalRef.current) clearInterval(focusIntervalRef.current);
+      focusStartRef.current = Date.now();
+      focusTimerRef.current = setInterval(() => {
+        setFocusSeconds(Math.floor((Date.now() - focusStartRef.current) / 1000));
+      }, 1000);
+    } else if (focusTimerRef.current) {
+      clearInterval(focusTimerRef.current);
     }
-    return () => { if (focusIntervalRef.current) clearInterval(focusIntervalRef.current); };
+    return () => {
+      if (focusTimerRef.current) clearInterval(focusTimerRef.current);
+    };
   }, [focusMode]);
 
-  const handleContentChange = useCallback((value: string) => {
-    setPages((prev) => prev.map((p) => p.id === activeId ? { ...p, content: value, updatedAt: new Date() } : p));
-    setSaveIndicator("saving");
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => setSaveIndicator("saved"), 800);
+  // Handle editor click (for checkboxes) and paste events (for HTML sanitization)
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    function onCheckboxClick(e: MouseEvent) {
+      const target = e.target as HTMLInputElement;
+      if (target.tagName !== "INPUT" || target.type !== "checkbox") return;
+
+      // Sync the DOM attribute so innerHTML reflects the visual state
+      setTimeout(() => {
+        if (target.checked) {
+          target.setAttribute("checked", "checked");
+        } else {
+          target.removeAttribute("checked");
+        }
+        if (editorRef.current) {
+          updateContent(editorRef.current.innerHTML);
+        }
+      }, 0);
+    }
+
+    function sanitizeElement(el: Element) {
+      const children = Array.from(el.children);
+      for (const child of children) {
+        const tagName = child.tagName.toLowerCase();
+        if (
+          ["script", "style", "iframe", "frame", "object", "embed", "applet", "link", "meta", "base", "form", "button", "textarea", "select"].includes(tagName) ||
+          (tagName === "input" && (child as HTMLInputElement).type !== "checkbox")
+        ) {
+          child.remove();
+          continue;
+        }
+
+        const attrs = Array.from(child.attributes);
+        for (const attr of attrs) {
+          const name = attr.name.toLowerCase();
+          const val = attr.value.toLowerCase().trim();
+          if (name.startsWith("on")) {
+            child.removeAttribute(attr.name);
+          } else if ((name === "href" || name === "src") && val.startsWith("javascript:")) {
+            child.removeAttribute(attr.name);
+          }
+        }
+        sanitizeElement(child);
+      }
+    }
+
+    function onPaste(e: ClipboardEvent) {
+      e.preventDefault();
+      const clipboardData = e.clipboardData;
+      if (!clipboardData) return;
+
+      const html = clipboardData.getData("text/html");
+      const text = clipboardData.getData("text/plain");
+
+      if (html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        // Clean body level attributes
+        const bodyAttrs = Array.from(doc.body.attributes);
+        for (const attr of bodyAttrs) {
+          const name = attr.name.toLowerCase();
+          const val = attr.value.toLowerCase().trim();
+          if (name.startsWith("on") || ((name === "href" || name === "src") && val.startsWith("javascript:"))) {
+            doc.body.removeAttribute(attr.name);
+          }
+        }
+
+        sanitizeElement(doc.body);
+        document.execCommand("insertHTML", false, doc.body.innerHTML);
+      } else if (text) {
+        document.execCommand("insertText", false, text);
+      }
+    }
+
+    editor.addEventListener("click", onCheckboxClick);
+    editor.addEventListener("paste", onPaste as any);
+    return () => {
+      editor.removeEventListener("click", onCheckboxClick);
+      editor.removeEventListener("paste", onPaste as any);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  const addPage = (name: string) => {
+  // --- Actions ---
+
+  /**
+   * Called on every editor input event.
+   * Updates React state immediately (for UI) and schedules a debounced
+   * localStorage write 600 ms after the last keystroke.
+   */
+  function updateContent(html: string) {
+    const newPages = pages.map((page) =>
+      page.id === activeIdRef.current
+        ? { ...page, content: html, updatedAt: new Date() }
+        : page
+    );
+    setPages(newPages);
+
+    // Visual save indicator
+    setSaveStatus("saving");
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => setSaveStatus("saved"), 800);
+
+    // Debounced localStorage write — only fires 600 ms after typing stops
+    if (contentSaveRef.current) clearTimeout(contentSaveRef.current);
+    contentSaveRef.current = setTimeout(() => {
+      saveData({
+        pages: newPages,
+        activeId: activeIdRef.current,
+        themeMode: themeModeRef.current,
+        customBg: customBgRef.current,
+        customFg: customFgRef.current,
+      });
+    }, 600);
+  }
+
+  function handleEditorInput() {
+    if (!editorRef.current) return;
+    updateContent(editorRef.current.innerHTML);
+  }
+
+  // Structural page mutations — save immediately (these are rare, not typed)
+  function addPage(name: string) {
     const page = createPage("", name || "Untitled");
-    setPages((prev) => [page, ...prev.filter((p) => !p.pinned), ...prev.filter((p) => p.pinned)]);
+    const unpinned = pages.filter((p) => !p.pinned);
+    const pinned = pages.filter((p) => p.pinned);
+    const newPages = [page, ...unpinned, ...pinned];
+    setPages(newPages);
     setActiveId(page.id);
-  };
+    saveData({ pages: newPages, activeId: page.id, themeMode, customBg, customFg });
+  }
 
-  const deletePage = (id: string) => {
-    setPages((prev) => {
-      const next = prev.filter((p) => p.id !== id);
-      if (next.length === 0) { const fresh = createPage("", "Untitled"); setActiveId(fresh.id); return [fresh]; }
-      if (activeId === id) setActiveId(next[0].id);
-      return next;
-    });
-  };
+  function deletePage(id: string) {
+    const remaining = pages.filter((p) => p.id !== id);
+    if (remaining.length === 0) {
+      const fresh = createPage("", "Untitled");
+      setPages([fresh]);
+      setActiveId(fresh.id);
+      saveData({ pages: [fresh], activeId: fresh.id, themeMode, customBg, customFg });
+      return;
+    }
+    setPages(remaining);
+    const newActiveId = activeId === id ? remaining[0].id : activeId;
+    if (activeId === id) setActiveId(newActiveId);
+    saveData({ pages: remaining, activeId: newActiveId, themeMode, customBg, customFg });
+  }
 
-  const pinPage = (id: string) => setPages((prev) => prev.map((p) => p.id === id ? { ...p, pinned: !p.pinned } : p));
+  function togglePin(id: string) {
+    const newPages = pages.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p));
+    setPages(newPages);
+    saveData({ pages: newPages, activeId, themeMode, customBg, customFg });
+  }
 
-  const downloadPdf = (id: string) => {
-    const page = pages.find((p) => p.id === id);
-    if (!page) return;
-    const title = getTitle(page);
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>
-      body { font-family: Georgia, serif; font-size: 18px; line-height: 1.85; max-width: 680px; margin: 60px auto; color: #1a1a18; white-space: pre-wrap; }
-      h1 { font-size: 22px; margin-bottom: 24px; }
-    </style></head><body><h1>${title}</h1>${page.content.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</body></html>`;
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => { win.print(); }, 400);
-  };
+  function startRename(page: Page) {
+    setEditingId(page.id);
+    setEditingName(getTitle(page));
+  }
 
-  const commitRename = (id: string) => {
-    const val = inlineEditValue.trim();
-    setPages((prev) => prev.map((p) => p.id === id ? { ...p, title: val || "Untitled" } : p));
-    setInlineEditId(null);
-  };
+  function finishRename(id: string) {
+    const newPages = pages.map((page) =>
+      page.id === id ? { ...page, title: editingName.trim() || "Untitled" } : page
+    );
+    setPages(newPages);
+    setEditingId(null);
+    saveData({ pages: newPages, activeId, themeMode, customBg, customFg });
+  }
 
-  const wc = wordCount(activePage?.content ?? "");
-  const cc = charCount(activePage?.content ?? "");
-
-  const bg = themeMode === "light" ? "#ffffff" : themeMode === "dark" ? "#111110" : customBg;
-  const fg = themeMode === "light" ? "#1a1a18" : themeMode === "dark" ? "#e0e0dc" : customFg;
-  const muted = themeMode === "light" ? "#b0b0b0" : themeMode === "dark" ? "#4a4a45" : `${customFg}99`;
-  const borderColor = themeMode === "light" ? "#e0e0dc" : themeMode === "dark" ? "#232320" : `${customFg}30`;
-  const activeItemBg = themeMode === "light" ? "#f0f0ee" : themeMode === "dark" ? "#1e1e1b" : `${customFg}18`;
-  const hoverBg = themeMode === "light" ? "#f5f5f3" : themeMode === "dark" ? "#191917" : `${customFg}11`;
-  const divider = `1px dotted ${borderColor}`;
+  // --- Render ---
 
   return (
-    <div className="size-full flex overflow-hidden select-none" style={{ background: bg, color: fg, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div
+      className="size-full flex overflow-hidden"
+      style={{
+        background: theme.bg,
+        color: theme.fg,
+        fontFamily: "'Inter', system-ui, sans-serif",
+        ["--theme-bg" as any]: theme.bg,
+        ["--theme-fg" as any]: theme.fg,
+      }}
+    >
       {showNewModal && (
-        <NameModal dark={dark} label="Name your page"
+        <NameModal
+          dark={themeMode === "dark"}
+          label="Name your page"
           onConfirm={(name) => { addPage(name); setShowNewModal(false); }}
-          onCancel={() => setShowNewModal(false)} />
+          onCancel={() => setShowNewModal(false)}
+        />
       )}
 
-      {menuState && (
-        <PageMenu dark={dark}
-          pinned={pages.find((p) => p.id === menuState.id)?.pinned ?? false}
-          onPin={() => pinPage(menuState.id)}
-          onRename={() => { setInlineEditId(menuState.id); setInlineEditValue(getTitle(pages.find(p => p.id === menuState.id)!)); setMenuState(null); }}
+      {menuState && menuPage && (
+        <PageMenu
+          dark={themeMode === "dark"}
+          pinned={menuPage.pinned}
+          anchorRect={menuState.rect}
+          onPin={() => togglePin(menuState.id)}
+          onRename={() => { startRename(menuPage); setMenuState(null); }}
           onDelete={() => { deletePage(menuState.id); setMenuState(null); }}
           onClose={() => setMenuState(null)}
-          anchorRect={menuState.rect} />
+        />
       )}
 
-      {/* Sidebar */}
-      {!focusMode && (
-        <div className="flex flex-col shrink-0 overflow-hidden transition-all duration-200"
-          style={{ width: sidebarOpen ? 220 : 0, background: bg, borderRight: divider, opacity: sidebarOpen ? 1 : 0 }}>
+      {/* ── Left sidebar ─────────────────────────────────────────── */}
+      <div
+        className="flex flex-col shrink-0 overflow-hidden transition-all duration-200 select-none"
+        style={{
+          width: (sidebarOpen && !focusMode) ? 220 : 0,
+          background: theme.bg,
+          borderRight: (sidebarOpen && !focusMode) ? divider : "0px solid transparent",
+          opacity: (sidebarOpen && !focusMode) ? 1 : 0,
+        }}
+      >
+        <div
+          className="flex items-center justify-between px-4 shrink-0"
+          style={{ height: 52, borderBottom: divider }}
+        >
+          <span style={{ fontSize: 20, fontWeight: 600, color: theme.muted, letterSpacing: "0.01em" }}>
+            SimpleNotes
+          </span>
+          <IconButton
+            onClick={() => setShowNewModal(true)}
+            hoverBg={theme.hover}
+            muted={theme.muted}
+            size={26}
+            title="New page"
+          >
+            <Plus size={14} />
+          </IconButton>
+        </div>
 
-          {/* Header: SimpleNotes logo + new page button */}
-          <div className="flex items-center justify-between px-4 shrink-0" style={{ height: 52, borderBottom: divider }}>
-            <span style={{ fontSize: 16, color: muted, letterSpacing: "0.01em" }}>SimpleNotes</span>
-            <button onClick={() => setShowNewModal(true)}
-              className="flex items-center justify-center rounded transition-colors"
-              style={{ width: 26, height: 26, color: muted }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = hoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              title="New page">
-              <Plus size={14} />
+        <div
+          className="flex-1 overflow-y-auto"
+          style={{ scrollbarWidth: "none", paddingTop: 30, paddingBottom: 4 }}
+        >
+          {sortPages(pages).map((page) => {
+            const isActive = page.id === activeId;
+            const isHovered = hoveredId === page.id;
+            const menuOpen = menuState?.id === page.id;
+            const isEditing = editingId === page.id;
+            const showMenu = !isEditing && (isHovered || menuOpen || page.pinned);
+
+            return (
+              <div
+                key={page.id}
+                className="group flex items-center gap-2 px-3 cursor-pointer"
+                style={{
+                  height: 40,
+                  background: isActive ? theme.activeItem : "transparent",
+                  borderRadius: 6,
+                  margin: "1px 6px",
+                }}
+                onClick={() => { if (!isEditing) setActiveId(page.id); }}
+                onMouseEnter={() => setHoveredId(page.id)}
+                onMouseLeave={() => { if (!menuOpen) setHoveredId(null); }}
+              >
+                {isEditing ? (
+                  <input
+                    ref={editInputRef}
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onBlur={() => finishRename(page.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") finishRename(page.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex-1 outline-none bg-transparent"
+                    style={{ fontSize: 13, color: theme.fg, borderBottom: `1px solid ${theme.border}` }}
+                  />
+                ) : (
+                  <span
+                    className="flex-1 truncate"
+                    style={{ fontSize: 13, color: isActive ? theme.fg : theme.muted }}
+                    onDoubleClick={(e) => { e.stopPropagation(); startRename(page); }}
+                  >
+                    {getTitle(page)}
+                  </span>
+                )}
+
+                {showMenu && (
+                  <button
+                    className="flex items-center justify-center rounded shrink-0 transition-colors"
+                    style={{ width: 20, height: 20, color: theme.muted, background: "transparent" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuState({ id: page.id, rect: e.currentTarget.getBoundingClientRect() });
+                    }}
+                  >
+                    {page.pinned && !isHovered && !menuOpen
+                      ? <Pin size={11} />
+                      : <MoreHorizontal size={13} />}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-4 py-3 shrink-0" style={{ borderTop: divider }}>
+          <span style={{ fontSize: 11, color: theme.muted }}>
+            {pages.length} {pages.length === 1 ? "page" : "pages"}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Right side: top toolbar + editor ─────────────────────── */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0" style={{ position: "relative" }}>
+
+        {/* Top toolbar */}
+        <div
+          className="flex items-center px-4 shrink-0 select-none transition-all duration-200"
+          style={{
+            height: focusMode ? 0 : 52,
+            borderBottom: focusMode ? "1px solid transparent" : divider,
+            opacity: focusMode ? 0 : 1,
+            pointerEvents: focusMode ? "none" : "auto",
+            overflow: focusMode ? "hidden" : "visible",
+            zIndex: 10,
+          }}
+        >
+          <IconButton
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            hoverBg={theme.hover}
+            muted={theme.muted}
+            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          >
+            {sidebarOpen ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
+          </IconButton>
+
+          <div className="flex-1" />
+
+          <div className="flex items-center gap-3">
+            <WordStats words={wordCount} chars={charCount} muted={theme.muted} />
+
+            <button
+              onClick={() => setFocusMode(true)}
+              className="rounded px-3 transition-colors"
+              style={{
+                height: 28,
+                fontSize: 12,
+                color: theme.muted,
+                background: "transparent",
+                border: "1px solid #e05252",
+                marginLeft: 8,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = theme.hover; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              Focus
             </button>
-          </div>
 
-          {/* Page list */}
-          <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: "none", paddingTop: 30, paddingBottom: 4 }}>
-            {sortedPages.map((page) => {
-              const isActive = page.id === activeId;
-              const isHovered = hoveredId === page.id;
-              const menuOpen = menuState?.id === page.id;
-              const isEditing = inlineEditId === page.id;
-
-              return (
-                <div key={page.id}
-                  className="group flex items-center gap-2 px-3 cursor-pointer"
-                  style={{ height: 40, background: isActive ? activeItemBg : "transparent", borderRadius: 6, margin: "1px 6px" }}
-                  onClick={() => { if (!isEditing) setActiveId(page.id); }}
-                  onMouseEnter={() => setHoveredId(page.id)}
-                  onMouseLeave={() => { if (!menuOpen) setHoveredId(null); }}>
-
-                  {isEditing ? (
-                    <input ref={inlineInputRef} value={inlineEditValue}
-                      onChange={(e) => setInlineEditValue(e.target.value)}
-                      onBlur={() => commitRename(page.id)}
-                      onKeyDown={(e) => { if (e.key === "Enter") commitRename(page.id); if (e.key === "Escape") setInlineEditId(null); }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex-1 outline-none bg-transparent"
-                      style={{ fontSize: 13, color: fg, borderBottom: `1px solid ${borderColor}` }} />
-                  ) : (
-                    <span className="flex-1 truncate"
-                      style={{ fontSize: 13, color: isActive ? fg : muted }}
-                      onDoubleClick={(e) => { e.stopPropagation(); setInlineEditId(page.id); setInlineEditValue(getTitle(page)); }}>
-                      {getTitle(page)}
-                    </span>
-                  )}
-
-                  {!isEditing && (isHovered || menuOpen || page.pinned) && (
-                    <button className="flex items-center justify-center rounded shrink-0 transition-colors"
-                      style={{ width: 20, height: 20, color: muted, background: "transparent" }}
-                      onClick={(e) => { e.stopPropagation(); setMenuState({ id: page.id, rect: e.currentTarget.getBoundingClientRect() }); }}>
-                      {page.pinned && !isHovered && !menuOpen ? <Pin size={11} /> : <MoreHorizontal size={13} />}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="px-4 py-3 shrink-0" style={{ borderTop: divider }}>
-            <span style={{ fontSize: 11, color: muted }}>{pages.length} {pages.length === 1 ? "page" : "pages"}</span>
+            <ThemeDropdown
+              themeMode={themeMode}
+              customBg={customBg}
+              customFg={customFg}
+              hoverBg={theme.hover}
+              muted={theme.muted}
+              onLight={() => setThemeMode("light")}
+              onDark={() => setThemeMode("dark")}
+              onCustom={(bg, fg) => { setCustomBg(bg); setCustomFg(fg); setThemeMode("custom"); }}
+              onClear={() => {
+                const defaults = getEmptyData();
+                setThemeMode(defaults.themeMode);
+                setCustomBg(defaults.customBg);
+                setCustomFg(defaults.customFg);
+              }}
+            />
           </div>
         </div>
-      )}
 
-      {/* Main area */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0" style={{ position: "relative" }}>
-        {/* Toolbar */}
-        {!focusMode && (
-          <div className="flex items-center px-4 shrink-0" style={{ height: 52, borderBottom: divider }}>
-            <button onClick={() => setSidebarOpen((v) => !v)}
-              className="flex items-center justify-center rounded transition-colors"
-              style={{ width: 30, height: 30, color: muted }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = hoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>
-              {sidebarOpen ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
-            </button>
+        {/* Scrollable editor area */}
+        <div
+          className="flex-1 overflow-y-auto flex justify-center"
+          style={{ scrollbarWidth: "thin", scrollbarColor: `${theme.border} transparent` }}
+        >
+          {/* Exit focus button */}
+          <button
+            onClick={() => setFocusMode(false)}
+            className="fixed z-10 rounded px-3 transition-all duration-200"
+            style={{
+              top: 10,
+              right: 62,
+              height: 28,
+              fontSize: 12,
+              color: theme.muted,
+              background: theme.hover,
+              border: "1px solid #e05252",
+              opacity: focusMode ? 1 : 0,
+              pointerEvents: focusMode ? "auto" : "none",
+              transform: focusMode ? "scale(1)" : "scale(0.95)",
+            }}
+          >
+            Exit focus
+          </button>
 
-            <div className="flex-1" />
-
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-3" style={{ color: muted, fontSize: 12 }}>
-                <span className="flex items-center gap-1"><Hash size={11} />{wc.toLocaleString()} words</span>
-                <span className="flex items-center gap-1"><AlignLeft size={11} />{cc.toLocaleString()} chars</span>
-              </div>
-
-              <button
-                onClick={() => setFocusMode(true)}
-                className="rounded px-3 transition-colors"
-                style={{ height: 28, fontSize: 12, color: muted, background: "transparent", border: "1px solid #e05252", marginLeft: 8 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = hoverBg)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                Focus
-              </button>
-
-              <ThemeDropdown
-                themeMode={themeMode} customBg={customBg} customFg={customFg}
-                hoverBg={hoverBg} muted={muted} borderColor={borderColor}
-                onLight={() => setThemeMode("light")}
-                onDark={() => setThemeMode("dark")}
-                onCustom={(bg, fgColor) => { setCustomBg(bg); setCustomFg(fgColor); setThemeMode("custom"); }}
-                onClear={() => setThemeMode("light")}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Editor */}
-        <div className="flex-1 overflow-y-auto flex justify-center" style={{ scrollbarWidth: "thin", scrollbarColor: `${borderColor} transparent` }}>
-          {focusMode && (
-            <button onClick={() => setFocusMode(false)}
-              className="fixed top-4 right-4 z-10 rounded px-3"
-              style={{ height: 28, fontSize: 12, color: muted, background: hoverBg, border: "1px solid #e05252" }}>
-              Exit focus
-            </button>
-          )}
-          <textarea
-            ref={textareaRef}
-            value={activePage?.content ?? ""}
-            onChange={(e) => handleContentChange(e.target.value)}
-            placeholder="Start writing…"
-            spellCheck
-            className="w-full resize-none outline-none bg-transparent"
-            style={{ maxWidth: 680, padding: "72px 24px", fontFamily: "'Lora', Georgia, serif", fontSize: 18, lineHeight: 1.85, color: fg, caretColor: fg, minHeight: "100%", scrollbarWidth: "none" }}
+          {/* ── Contenteditable rich-text editor ── */}
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={handleEditorInput}
+            data-placeholder="Start writing…"
+            className="note-editor w-full outline-none"
+            style={{
+              maxWidth: 680,
+              // Extra bottom padding so content never hides under the floating toolbar
+              padding: "72px 24px 140px",
+              fontFamily: "'Lora', Georgia, serif",
+              fontSize: 18,
+              lineHeight: 1.85,
+              color: theme.fg,
+              caretColor: theme.fg,
+              minHeight: "100%",
+              scrollbarWidth: "none",
+              // Override the select-none class that might propagate from sidebar
+              userSelect: "text",
+              WebkitUserSelect: "text",
+            }}
           />
         </div>
 
-        {/* Focus mode bottom bar */}
-        {focusMode && (
-          <div className="flex items-center justify-center gap-6 shrink-0 py-3"
-            style={{ fontSize: 12, color: muted, borderTop: divider }}>
-            <span className="flex items-center gap-1"><Hash size={11} />{wc.toLocaleString()} words</span>
-            <span className="flex items-center gap-1"><AlignLeft size={11} />{cc.toLocaleString()} chars</span>
-            <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatTimer(focusSeconds)}</span>
-          </div>
-        )}
+        {/* Focus mode bottom stats bar */}
+        <div
+          className="flex items-center justify-center gap-6 shrink-0 select-none overflow-hidden transition-all duration-200"
+          style={{
+            height: focusMode ? 40 : 0,
+            opacity: focusMode ? 1 : 0,
+            borderTop: focusMode ? divider : "1px solid transparent",
+            fontSize: 12,
+            color: theme.muted,
+            pointerEvents: focusMode ? "auto" : "none",
+          }}
+        >
+          <span className="flex items-center gap-1">
+            <Hash size={11} />
+            {wordCount.toLocaleString()} words
+          </span>
+          <span className="flex items-center gap-1">
+            <AlignLeft size={11} />
+            {charCount.toLocaleString()} chars
+          </span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatTimer(focusSeconds)}</span>
+        </div>
 
-        {/* Save indicator — bottom right */}
-        {saveIndicator !== "idle" && (
-          <div className="fixed bottom-4 right-4 z-20 pointer-events-none"
-            style={{ fontSize: 11, color: muted }}>
-            {saveIndicator === "saving" ? "saving…" : "saved"}
+        {/* Save indicator */}
+        {saveStatus !== "idle" && (
+          <div
+            className="fixed z-20 pointer-events-none select-none"
+            style={{ bottom: 12, right: 16, fontSize: 11, color: theme.muted }}
+          >
+            {saveStatus === "saving" ? "saving…" : "saved"}
           </div>
         )}
       </div>
+
+      {/* ── Floating formatting toolbar (always visible) ─────────── */}
+      <FormattingToolbar editorRef={editorRef} theme={theme} focusMode={focusMode} />
     </div>
   );
 }
