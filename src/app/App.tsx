@@ -250,7 +250,7 @@ export default function App() {
    * localStorage write 600 ms after the last keystroke.
    */
   function updateContent(html: string) {
-    const newPages = pages.map((page) =>
+    const newPages = pages.map((page: Page) =>
       page.id === activeIdRef.current
         ? { ...page, content: html, updatedAt: new Date() }
         : page
@@ -277,14 +277,24 @@ export default function App() {
 
   function handleEditorInput() {
     if (!editorRef.current) return;
-    updateContent(editorRef.current.innerHTML);
+
+    const currentHtml = editorRef.current.innerHTML;
+    const currentPlainText = stripHtml(currentHtml);
+
+    if (currentPlainText === "") {
+      // Explicitly clear the innerHTML to ensure the :empty pseudo-class applies
+      editorRef.current.innerHTML = "";
+      updateContent("");
+    } else {
+      updateContent(currentHtml);
+    }
   }
 
   // Structural page mutations — save immediately (these are rare, not typed)
   function addPage(name: string) {
     const page = createPage("", name || "Untitled");
-    const unpinned = pages.filter((p) => !p.pinned);
-    const pinned = pages.filter((p) => p.pinned);
+    const unpinned = pages.filter((p: Page) => !p.pinned);
+    const pinned = pages.filter((p: Page) => p.pinned);
     const newPages = [page, ...unpinned, ...pinned];
     setPages(newPages);
     setActiveId(page.id);
@@ -292,7 +302,7 @@ export default function App() {
   }
 
   function deletePage(id: string) {
-    const remaining = pages.filter((p) => p.id !== id);
+    const remaining = pages.filter((p: Page) => p.id !== id);
     if (remaining.length === 0) {
       const fresh = createPage("", "Untitled");
       setPages([fresh]);
@@ -307,7 +317,7 @@ export default function App() {
   }
 
   function togglePin(id: string) {
-    const newPages = pages.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p));
+    const newPages = pages.map((p: Page) => (p.id === id ? { ...p, pinned: !p.pinned } : p));
     setPages(newPages);
     saveData({ pages: newPages, activeId, themeMode, customBg, customFg });
   }
@@ -318,7 +328,7 @@ export default function App() {
   }
 
   function finishRename(id: string) {
-    const newPages = pages.map((page) =>
+    const newPages = pages.map((page: Page) =>
       page.id === id ? { ...page, title: editingName.trim() || "Untitled" } : page
     );
     setPages(newPages);

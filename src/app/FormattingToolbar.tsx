@@ -85,7 +85,7 @@ export function FormattingToolbar({
   theme,
   focusMode = false,
 }: {
-  editorRef: RefObject<HTMLDivElement>;
+  editorRef: RefObject<HTMLDivElement | null>;
   theme: Theme;
   focusMode?: boolean;
 }) {
