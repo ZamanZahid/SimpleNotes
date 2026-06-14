@@ -281,8 +281,10 @@ export default function App() {
     const currentHtml = editorRef.current.innerHTML;
     const currentPlainText = stripHtml(currentHtml);
 
-    if (currentPlainText === "") {
-      // Explicitly clear the innerHTML to ensure the :empty pseudo-class applies
+    const hasMeaningfulContent = editorRef.current.querySelector('ul, ol, input[type="checkbox"]') !== null || currentPlainText.length > 0;
+
+    if (!hasMeaningfulContent) {
+
       editorRef.current.innerHTML = "";
       updateContent("");
     } else {
@@ -290,7 +292,6 @@ export default function App() {
     }
   }
 
-  // Structural page mutations — save immediately (these are rare, not typed)
   function addPage(name: string) {
     const page = createPage("", name || "Untitled");
     const unpinned = pages.filter((p: Page) => !p.pinned);
