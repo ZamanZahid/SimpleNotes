@@ -81,7 +81,9 @@ This means:
 
 ---
 
+
 ## Why I Created SimpleNotes
+
 
 I created SimpleNotes because I couldn't find a note taking app that was simple, free, and saved my work without requiring an account. Most apps were either overloaded with features, included AI for no reason, required subscriptions, or made users to sign up before they could start writing.
 
