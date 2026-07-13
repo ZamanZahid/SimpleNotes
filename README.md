@@ -20,11 +20,7 @@ SimpleNotes is a simple lightweight place for taking notes, writing your thought
 - Rename and delete projects
 - Pin important projects to the top
 - Live word counter
-- Minimalist design
-- Collapsible sidebar
-- Automatic saving using Local Storage
-- No account required
-- Built-in stopwatch
+- Simple design
 - And much more!
 
 ---
